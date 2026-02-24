@@ -93,49 +93,220 @@ st.set_page_config(page_title="NAZ Measure Matching", layout="wide")
 st.title("NAZ Measure Matching")
 
 
-# -------------------------
-# Sidebar inputs
-# -------------------------
-with st.sidebar:
-    st.header("📅 Dates")
-    start_date = st.date_input("Start Date", value=date(2025, 3, 31))
-    end_date = st.date_input("End Date", value=date(2025, 6, 22))
-    measure_start = st.date_input("Measure Start", value=date(2025, 6, 30))
-    measure_end = st.date_input("Measure End", value=date(2025, 8, 24))
-    data_end_cap = st.date_input("Data End Cap", value=date(2025, 11, 30))
-
-    st.header("🏷️ Filters")
-    brand_cluster_code = st.selectbox(
-        "Brand Cluster Code",
-        options=["MUL", "BDL", "BUD", "STA", "BHL", "KGA"],
-        index=["MUL", "BDL", "BUD", "STA", "BHL", "KGA"].index("STA"),
-    )
-    desired_premise = st.selectbox("Premise", options=["ON PREMISE", "OFF PREMISE"], index=0)
-    desired_retailer_channel = st.multiselect(
-        "Retailer Channel",
-        options=CANONICAL_CHANNELS,
-        default=["BAR", "RESTAURANT"],
-    )
-
-    st.header("⚙️ VPIDs + Variable Timing")
-    vpid_names_text = st.text_input("VPIDs (comma-separated)", value="", placeholder="77985, 4201748, 4249563")
-    vpid_offsets_text = st.text_input("Offsets (weeks, comma-separated)", value="", placeholder="0, 0, 1")
-    max_controls_per_test = st.number_input("Max Controls/Test", min_value=1, value=1, step=1)
-
-    st.header("🧪 Matching Config Selection")
-    selected_cfg_names = st.multiselect(
-        "Match Config(s)",
-        options=sorted(MATCH_CONFIG_CATALOG.keys()),
-        default=["minmax_CYTrend_blocking"],
-    )
-
-    run = st.button("Run Matching", type="primary")
-
 
 # -------------------------
 # Main panel outputs + orchestration
 # -------------------------
 
+# -------------------------
+# Main Page Inputs
+# -------------------------
+
+st.header("📅 Dates")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    start_date = st.date_input("Start Date", value=date(2025, 3, 31))
+    measure_start = st.date_input("Measure Start", value=date(2025, 6, 30))
+
+with col2:
+    end_date = st.date_input("End Date", value=date(2025, 6, 22))
+    measure_end = st.date_input("Measure End", value=date(2025, 8, 24))
+
+with col3:
+    data_end_cap = st.date_input("Data End Cap", value=date(2025, 11, 30))
+
+
+st.header("🏷️ Filters")
+
+col4, col5 = st.columns(2)
+
+with col4:
+    brand_cluster_code = st.selectbox(
+        "Brand Cluster Code",
+        options=["MUL", "BDL", "BUD", "STA", "BHL", "KGA"],
+        index=["MUL", "BDL", "BUD", "STA", "BHL", "KGA"].index("STA"),
+    )
+
+with col5:
+    desired_premise = st.selectbox(
+        "Premise",
+        options=["ON PREMISE", "OFF PREMISE"],
+        index=0
+    )
+
+
+# -------------------------
+# Retailer Channels
+# -------------------------
+
+# -------------------------
+# Retailer Channels
+# -------------------------
+
+st.subheader("Retailer Channels")
+
+# Initialize session state once
+if "channel_states" not in st.session_state:
+    st.session_state.channel_states = {
+        ch: False for ch in CANONICAL_CHANNELS
+    }
+
+if "select_all_channels" not in st.session_state:
+    st.session_state.select_all_channels = False
+
+
+def handle_select_all():
+    """Triggered when Select All checkbox changes."""
+    for ch in CANONICAL_CHANNELS:
+        st.session_state.channel_states[ch] = st.session_state.select_all_channels
+
+
+def sync_select_all_state():
+    """Keep Select All in sync if user manually checks/unchecks boxes."""
+    all_selected = all(st.session_state.channel_states.values())
+    st.session_state.select_all_channels = all_selected
+
+
+# Master checkbox
+st.checkbox(
+    "Select All Channels",
+    key="select_all_channels",
+    on_change=handle_select_all
+)
+
+# Dropdown container
+with st.expander("Choose Retailer Channels", expanded=False):
+
+    for ch in CANONICAL_CHANNELS:
+        st.checkbox(
+            ch,
+            key=f"channel_{ch}",
+            value=st.session_state.channel_states[ch],
+            on_change=sync_select_all_state
+        )
+
+        # Sync back into dictionary
+        st.session_state.channel_states[ch] = st.session_state.get(f"channel_{ch}", False)
+
+
+# Final selected list
+desired_retailer_channel = [
+    ch for ch, selected in st.session_state.channel_states.items() if selected
+]
+# -------------------------
+# VPIDs + Variable Timing
+# -------------------------
+
+st.header("⚙️ VPIDs + Variable Timing")
+
+uploaded_file = st.file_uploader(
+    "Upload CSV (Column 1 = VPID, Column 2 = Offset Weeks)",
+    type=["csv"]
+)
+
+vpids = []
+offsets = []
+
+if uploaded_file is not None:
+    try:
+        df_upload = pd.read_csv(uploaded_file)
+
+        if df_upload.shape[1] < 2:
+            st.error("CSV must have at least 2 columns.")
+            st.stop()
+
+        df_upload = df_upload.iloc[:, :2]
+        df_upload.columns = ["VPID", "identifier"]
+
+        df_upload["VPID"] = pd.to_numeric(df_upload["VPID"], errors="coerce")
+        df_upload["identifier"] = pd.to_numeric(df_upload["identifier"], errors="coerce")
+
+        if df_upload.isna().any().any():
+            st.error("CSV contains non-numeric values.")
+            st.stop()
+
+        vpids = df_upload["VPID"].astype(int).tolist()
+        offsets = df_upload["identifier"].astype(int).tolist()
+
+        st.success(f"Loaded {len(vpids)} VPIDs from CSV.")
+        st.dataframe(df_upload, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Error reading CSV: {e}")
+        st.stop()
+
+else:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        vpid_names_text = st.text_input(
+            "VPIDs (comma-separated)",
+            placeholder="77985, 4201748, 4249563"
+        )
+
+    with col2:
+        vpid_offsets_text = st.text_input(
+            "Offsets (weeks, comma-separated)",
+            placeholder="0, 0, 1"
+        )
+
+    try:
+        if vpid_names_text:
+            vpids = parse_int_list(vpid_names_text)
+        if vpid_offsets_text:
+            offsets = parse_int_list(vpid_offsets_text)
+    except ValueError as e:
+        st.error(f"Parsing error: {e}")
+        st.stop()
+
+# Validation
+if vpids and offsets:
+    if len(vpids) != len(offsets):
+        st.error("VPIDs count must match offsets count.")
+        st.stop()
+
+    vpid_timing_df = pd.DataFrame({
+        "VPID": vpids,
+        "identifier": offsets
+    })
+
+    st.caption(f"Total VPIDs Loaded: {len(vpids)}")
+
+else:
+    vpid_timing_df = pd.DataFrame(columns=["VPID", "identifier"])
+# Final validation
+if vpids and offsets:
+    if len(vpids) != len(offsets):
+        st.error(
+            f"VPIDs count ({len(vpids)}) must match offsets count ({len(offsets)})."
+        )
+        st.stop()
+
+    vpid_timing_df = pd.DataFrame({
+        "VPID": vpids,
+        "identifier": offsets
+    })
+
+    st.caption(f"Total VPIDs Loaded: {len(vpids)}")
+else:
+    vpid_timing_df = pd.DataFrame(columns=["VPID", "identifier"])
+
+max_controls_per_test = st.number_input(
+    "Max Controls Per Test",
+    min_value=1,
+    value=1,
+    step=1
+)
+st.header("Matching Config Selection")
+
+selected_cfg_names = st.multiselect(
+    "Match Config(s)",
+    options=sorted(MATCH_CONFIG_CATALOG.keys()),
+    default=["minmax_CYTrend_blocking"],
+)
+run = st.button("🚀 Run Matching", type="primary")
 TOTAL_STEPS = 5
 
 
@@ -154,58 +325,65 @@ def safe_show(obj, *, title: str | None = None):
 
 
 def parse_and_validate_inputs() -> tuple[MatchPayload | None, str | None]:
+
+    # -------------------------
     # Dates
+    # -------------------------
     if start_date is None or end_date is None:
         return None, "Start/End date required."
+
     if measure_start is None or measure_end is None:
         return None, "Measure start/end date required."
+
     if start_date > end_date:
         return None, "Start Date must be <= End Date."
+
     if measure_start > measure_end:
         return None, "Measure Start must be <= Measure End."
 
+    # -------------------------
     # Filters
+    # -------------------------
     if not brand_cluster_code or not brand_cluster_code.strip():
         return None, "Brand Cluster Code is required."
+
     if not desired_retailer_channel:
         return None, "Select at least one retailer channel."
+
     if not selected_cfg_names:
         return None, "Select at least one match config."
 
-    # VPIDs + offsets
-    try:
-        vpids = parse_int_list(vpid_names_text)
-        offsets = parse_int_list(vpid_offsets_text)
-    except ValueError as e:
-        return None, f"VPID/offset parsing error: {e}"
-
-    if not vpids:
+    # -------------------------
+    # VPIDs (already built earlier)
+    # -------------------------
+    if vpid_timing_df.empty:
         return None, "Provide at least one VPID."
-    if len(vpids) != len(offsets):
-        return None, f"VPIDs count ({len(vpids)}) must match offsets count ({len(offsets)})."
 
-    # Build derived objects once
-    vpid_timing_df = pd.DataFrame({"VPID": vpids, "identifier": offsets})
+    if len(vpid_timing_df["VPID"]) != len(vpid_timing_df["identifier"]):
+        return None, "VPIDs count must match offsets count."
+
+    # -------------------------
+    # Derived objects
+    # -------------------------
     match_configs = [MATCH_CONFIG_CATALOG[n] for n in selected_cfg_names]
 
     payload: MatchPayload = {
-    "start_date": start_date,
-    "end_date": end_date,
-    "measure_start": measure_start,
-    "measure_end": measure_end,
-    "data_end_cap": data_end_cap,
-    "brand_cluster_code": brand_cluster_code,
-    "desired_premise": desired_premise,
-    "desired_retailer_channel": list(desired_retailer_channel),
-    "max_controls_per_test": int(max_controls_per_test),
-    "selected_cfg_names": list(selected_cfg_names),
-    "match_configs": match_configs,
-    "vpid_timing_df": vpid_timing_df,
-    "vpids_count": int(len(vpids)),
+        "start_date": start_date,
+        "end_date": end_date,
+        "measure_start": measure_start,
+        "measure_end": measure_end,
+        "data_end_cap": data_end_cap,
+        "brand_cluster_code": brand_cluster_code,
+        "desired_premise": desired_premise,
+        "desired_retailer_channel": list(desired_retailer_channel),
+        "max_controls_per_test": int(max_controls_per_test),
+        "selected_cfg_names": list(selected_cfg_names),
+        "match_configs": match_configs,
+        "vpid_timing_df": vpid_timing_df,
+        "vpids_count": int(len(vpid_timing_df)),
     }
+
     return payload, None
-
-
 
 def render_run_config(payload: MatchPayload) -> None:
     st.code(
