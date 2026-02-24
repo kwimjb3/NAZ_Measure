@@ -11,11 +11,26 @@ import pandas as pd
 from sklearn.preprocessing import RobustScaler, StandardScaler, MinMaxScaler
 from typing import Optional, Dict, Iterable, Optional, Sequence, Tuple, List
 # from naz_measure.utils.data import get_raw_data_tables, get_post_period_data_df
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql import functions as F
+try:
+    from pyspark.sql import SparkSession, DataFrame
+    from pyspark.sql import functions as F
+    _PYSPARK_AVAILABLE = True
+except Exception:
+    SparkSession = None
+    DataFrame = object
+    F = None
+    _PYSPARK_AVAILABLE = False
 from datetime import date
 from dateutil.relativedelta import relativedelta
-from naz_measure.utils.data import *
+try:
+    from .data import *
+except Exception:
+    # Allow running this file directly (for quick tests) by ensuring the
+    # project root is on sys.path and importing the package-style module.
+    import os
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    from utils.data import *
 from tqdm.auto import tqdm  
 import copy
 

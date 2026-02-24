@@ -5,8 +5,19 @@
 # sys.breakpointhook = override_sys_breakpoint
 # %reload_ext autoreload
 # %autoreload 2
-from pyspark.sql import Window
-from pyspark.sql import functions as F, SparkSession
+try:
+    from pyspark.sql import Window
+    from pyspark.sql import functions as F, SparkSession
+    from pyspark.sql.dataframe import DataFrame
+    from pyspark.sql.functions import broadcast
+    _PYSPARK_AVAILABLE = True
+except Exception:
+    Window = None
+    F = None
+    SparkSession = None
+    from typing import Any as DataFrame
+    broadcast = None
+    _PYSPARK_AVAILABLE = False
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, date
