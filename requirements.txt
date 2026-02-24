@@ -1,1 +1,12 @@
 streamlit
+tqdm
+numpy
+pandas
+scikit-learn
+seaborn
+typing
+datetime
+dateutil
+pyspark
+matplotlib
+time
