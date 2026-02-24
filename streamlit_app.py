@@ -89,8 +89,8 @@ def get_raw_tables_cached():
         return None, None, None, None
 
 
-st.set_page_config(page_title="Retail Matching Analysis", layout="wide")
-st.title("🎯 Retail Matching Analysis")
+st.set_page_config(page_title="NAZ Measure Matching", layout="wide")
+st.title("NAZ Measure Matching")
 
 
 # -------------------------
@@ -129,7 +129,7 @@ with st.sidebar:
         default=["minmax_CYTrend_blocking"],
     )
 
-    run = st.button("🚀 Run Matching", type="primary")
+    run = st.button("Run Matching", type="primary")
 
 
 # -------------------------
