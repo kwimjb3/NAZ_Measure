@@ -4,7 +4,7 @@ from time import perf_counter
 
 import pandas as pd
 import streamlit as st
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler  # noqa: F401
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler # noqa: F401
 from typing import Any, TypedDict
 
 class MatchPayload(TypedDict):
@@ -52,6 +52,45 @@ MATCH_CONFIG_CATALOG = {
         "cols_to_standardize": ["CY_pre_period_VOL","LY_pre_period_VOL","YOY_pre_period_TREND","CY_CONTRIBUTION"],
         "blocking_factors": ["WHOLESALER_NUMBER","RETAILER_CHANNEL"],
         "scaler_type": MinMaxScaler,
+    },
+    "minmax_CYTrendShare_blocking": {
+        "name": "minmax_CYTrendShare_blocking",
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],        
+        "cols_to_standardize": [
+            "CY_pre_period_VOL", 
+            "CY_SHARE", 
+            "YOY_pre_period_TREND"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
+        "scaler_type": MinMaxScaler,
+    },
+    "minmax_CYShare_blocking": {
+        "name": "minmax_CYShare_blocking",
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],        
+        "cols_to_standardize": [
+            "CY_pre_period_VOL", 
+            "CY_SHARE"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
+        "scaler_type": MinMaxScaler,
+    },
+    "standard_CYTrendShare_blocking": {
+        "name": "standard_CYTrendShare_blocking",
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],        
+        "cols_to_standardize": [
+            "CY_pre_period_VOL", 
+            "YOY_pre_period_TREND", 
+            "CY_SHARE"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
+        "scaler_type": StandardScaler,
+    },
+    "robust_CYTrendShare_blocking": {
+        "name": "robust_CYTrendShare_blocking",
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"], 
+        "cols_to_standardize": [
+            "CY_pre_period_VOL", 
+            "YOY_pre_period_TREND", 
+            "CY_SHARE"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
+        "scaler_type": RobustScaler,
     },
 }
 
@@ -140,61 +179,55 @@ with col5:
 # -------------------------
 # Retailer Channels
 # -------------------------
-
-# -------------------------
-# Retailer Channels
-# -------------------------
-
 st.subheader("Retailer Channels")
 
-# Initialize session state once
-if "channel_states" not in st.session_state:
-    st.session_state.channel_states = {
-        ch: False for ch in CANONICAL_CHANNELS
-    }
+CHANNEL_KEY_PREFIX = "channel_"
+SELECT_ALL_KEY = "select_all_channels"
 
-if "select_all_channels" not in st.session_state:
-    st.session_state.select_all_channels = False
+def channel_key(ch: str) -> str:
+    return f"{CHANNEL_KEY_PREFIX}{ch}"
 
+def get_selected_channels() -> list[str]:
+    return [ch for ch in CANONICAL_CHANNELS if st.session_state.get(channel_key(ch), False)]
 
-def handle_select_all():
-    """Triggered when Select All checkbox changes."""
+def compute_all_selected() -> bool:
+    return all(st.session_state.get(channel_key(ch), False) for ch in CANONICAL_CHANNELS)
+
+def set_all_channels(value: bool) -> None:
     for ch in CANONICAL_CHANNELS:
-        st.session_state.channel_states[ch] = st.session_state.select_all_channels
+        st.session_state[channel_key(ch)] = value
 
+def on_select_all_change() -> None:
+    set_all_channels(st.session_state[SELECT_ALL_KEY])
 
-def sync_select_all_state():
-    """Keep Select All in sync if user manually checks/unchecks boxes."""
-    all_selected = all(st.session_state.channel_states.values())
-    st.session_state.select_all_channels = all_selected
+def on_any_channel_change() -> None:
+    st.session_state[SELECT_ALL_KEY] = compute_all_selected()
 
+# Initialize defaults once
+if SELECT_ALL_KEY not in st.session_state:
+    st.session_state[SELECT_ALL_KEY] = False
 
-# Master checkbox
+for ch in CANONICAL_CHANNELS:
+    st.session_state.setdefault(channel_key(ch), False)
+
+# Master checkbox (controls all)
 st.checkbox(
     "Select All Channels",
-    key="select_all_channels",
-    on_change=handle_select_all
+    key=SELECT_ALL_KEY,
+    on_change=on_select_all_change,
 )
 
 # Dropdown container
 with st.expander("Choose Retailer Channels", expanded=False):
-
     for ch in CANONICAL_CHANNELS:
         st.checkbox(
             ch,
-            key=f"channel_{ch}",
-            value=st.session_state.channel_states[ch],
-            on_change=sync_select_all_state
+            key=channel_key(ch),
+            on_change=on_any_channel_change,
         )
 
-        # Sync back into dictionary
-        st.session_state.channel_states[ch] = st.session_state.get(f"channel_{ch}", False)
+desired_retailer_channel = get_selected_channels()
 
-
-# Final selected list
-desired_retailer_channel = [
-    ch for ch, selected in st.session_state.channel_states.items() if selected
-]
 # -------------------------
 # VPIDs + Variable Timing
 # -------------------------
