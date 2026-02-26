@@ -6,5 +6,4 @@ pandas
 scikit-learn
 seaborn
 typing
-pyspark
 matplotlib
