@@ -1,4 +1,5 @@
 streamlit
+databricks-connect
 tqdm
 numpy
 pandas
