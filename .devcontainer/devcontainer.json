@@ -17,9 +17,9 @@
     }
   },
   "containerEnv": {
-    "DATABRICKS_HOST": "${secrets:DATABRICKS_HOST}",
-    "DATABRICKS_TOKEN": "${secrets:DATABRICKS_TOKEN}",
-    "DATABRICKS_CLUSTER_ID": "${secrets:DATABRICKS_CLUSTER_ID}"
+    "DATABRICKS_HOST": "${secrets.DATABRICKS_HOST}",
+    "DATABRICKS_TOKEN": "${secrets.DATABRICKS_TOKEN}",
+    "DATABRICKS_CLUSTER_ID": "${secrets.DATABRICKS_CLUSTER_ID}"
   },
   "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements.txt ] && pip3 install --user -r requirements.txt; pip3 install --user streamlit; pip3 install --user databricks-connect; echo '✅ Packages installed and Requirements met'",
   "postAttachCommand": {
