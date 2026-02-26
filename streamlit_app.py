@@ -1,7 +1,8 @@
 import traceback
 from datetime import date, datetime
 from time import perf_counter
-
+import os
+from databricks.connect import DatabricksSession
 import pandas as pd
 import streamlit as st
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler # noqa: F401
@@ -102,17 +103,42 @@ def parse_int_list(csv_text: str) -> list[int]:
 
 @st.cache_resource
 def get_spark():
-    # Lazily import SparkSession so importing this module doesn't require PySpark.
-    try:
-        from pyspark.sql import SparkSession
-    except Exception:
+    """
+    Returns a DatabricksSession connected via Databricks Connect.
+    Works locally or in a GitHub-hosted environment, using environment variables.
+    Expects:
+        DATABRICKS_HOST  -> e.g. https://<workspace>.databricks.com
+        DATABRICKS_TOKEN -> personal access token
+    """
+    host = os.environ.get("DATABRICKS_HOST")
+    token = os.environ.get("DATABRICKS_TOKEN")
+
+    if not host or not token:
+        st.error(
+            "Databricks environment variables not set! "
+            "Please ensure DATABRICKS_HOST and DATABRICKS_TOKEN are defined."
+        )
         return None
 
     try:
-        return SparkSession.getActiveSession() or SparkSession.builder.getOrCreate()
-    except Exception:
-        return None
+        # Build the Databricks session
+        spark = (
+            DatabricksSession.builder
+            .host(host)
+            .token(token)
+            .getOrCreate()
+        )
 
+        # Test the connection quickly
+        _ = spark.sql("SELECT 1 AS ok").collect()[0]["ok"]
+
+        return spark
+
+    except Exception as e:
+        st.error(f"Databricks Connect error: {e}")
+        import traceback
+        st.code(traceback.format_exc(), language="text")
+        return None
 
 @st.cache_resource
 def get_raw_tables_cached():
