@@ -1,7 +1,6 @@
 {
   "name": "Python 3",
-  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bullseye",
   "customizations": {
     "codespaces": {
       "openFiles": [
@@ -17,7 +16,12 @@
       ]
     }
   },
-  "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements.txt ] && pip3 install --user -r requirements.txt; pip3 install --user streamlit; echo '✅ Packages installed and Requirements met'",
+  "containerEnv": {
+    "DATABRICKS_HOST": "https://adb-6714064776910286.6.azuredatabricks.net/",
+    "DATABRICKS_TOKEN": "dapi8a0d0dae2e7ccc5f61a9acad8f73c610-3",
+    "DATABRICKS_CLUSTER_ID": "0225-152530-1bnj629s"
+  },
+  "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements.txt ] && pip3 install --user -r requirements.txt; pip3 install --user streamlit; pip3 install --user databricks-connect; echo '✅ Packages installed and Requirements met'",
   "postAttachCommand": {
     "server": "streamlit run streamlit_app.py --server.enableCORS false --server.enableXsrfProtection false"
   },

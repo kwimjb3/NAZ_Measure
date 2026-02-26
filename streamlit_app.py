@@ -1,3 +1,15 @@
+import streamlit as st
+# other imports
+from databricks.connect import DatabricksSession
+
+# -----------------------------
+# Initialize Spark session
+# -----------------------------
+spark = DatabricksSession.builder.getOrCreate()
+
+# Quick test (optional, can remove later)
+print("Connected to Spark version:", spark.version)
+
 import traceback
 from datetime import date, datetime
 from time import perf_counter
@@ -264,7 +276,7 @@ if uploaded_file is not None:
         offsets = df_upload["identifier"].astype(int).tolist()
 
         st.success(f"Loaded {len(vpids)} VPIDs from CSV.")
-        st.dataframe(df_upload, use_container_width=True)
+        st.dataframe(df_upload, width="stretch")
 
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
@@ -352,7 +364,7 @@ def safe_show(obj, *, title: str | None = None):
     if title:
         st.markdown(f"### {title}")
     try:
-        st.dataframe(obj, use_container_width=True)
+        st.dataframe(obj, width="stretch")
     except Exception:
         st.write(obj)
 

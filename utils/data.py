@@ -1,4 +1,9 @@
+import sys
+from pathlib import Path
 
+repo_root = Path("/workspaces/NAZ_Measure")  # adjust to your Codespace repo
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 # def override_sys_breakpoint(frame=None):
 #     from IPython.core.debugger import set_trace
 #     set_trace(frame=frame)

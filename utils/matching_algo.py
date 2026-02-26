@@ -1,5 +1,10 @@
-import sys
 
+import sys
+from pathlib import Path
+
+repo_root = Path("/workspaces/NAZ_Measure")  # adjust to your Codespace repo
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 # def override_sys_breakpoint(frame=None):
 #     from IPython.core.debugger import set_trace
 #     set_trace(frame=frame)
@@ -17,7 +22,7 @@ try:
     _PYSPARK_AVAILABLE = True
 except Exception:
     SparkSession = None
-    DataFrame = object
+    DataFrame = None
     F = None
     _PYSPARK_AVAILABLE = False
 from datetime import date
@@ -134,7 +139,7 @@ def safe_trend(cy: float, ly: float) -> float:
 def run_matching_variable_timing(
     vpid_timing_df: pd.DataFrame,
     match_configs: List[dict],
-    hv: DataFrame, hp: DataFrame, hr: DataFrame, hc: DataFrame,
+    hv: "DataFrame", hp: "DataFrame", hr: "DataFrame", hc: "DataFrame",
     base_start: date, base_end: date,
     base_measure_start: date, base_measure_end: date,
     brand_cluster_code: str,
