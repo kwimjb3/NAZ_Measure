@@ -1,5 +1,5 @@
 streamlit
-databricks-connect
+databricks-connect==18.0.0
 tqdm
 numpy
 pandas
