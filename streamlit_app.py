@@ -1,24 +1,19 @@
-import streamlit as st
-# other imports
-from databricks.connect import DatabricksSession
-
-# -----------------------------
-# Initialize Spark session
-# -----------------------------
-spark = DatabricksSession.builder.getOrCreate()
-
-# Quick test (optional, can remove later)
-print("Connected to Spark version:", spark.version)
-
+import os
 import traceback
 from datetime import date, datetime
 from time import perf_counter
-import os
-from databricks.connect import DatabricksSession
-import pandas as pd
-import streamlit as st
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler # noqa: F401
 from typing import Any, TypedDict
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from databricks.connect import DatabricksSession
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler  # noqa: F401
+
+from utils.data import build_variable_timing_caches
+
 
 class MatchPayload(TypedDict):
     start_date: date
@@ -35,73 +30,87 @@ class MatchPayload(TypedDict):
     vpid_timing_df: pd.DataFrame
     vpids_count: int
 
-CANONICAL_CHANNELS = sorted([
-    'BAR','CBD/THC RECREATIONAL','CONCESSIONAIRE','CONVENIENCE/ GAS','DRUG STORE','E-COMMERCE',
-    'FACTORY/OFFICE','GENERAL MERCHANDISE','GOVERNMENT/NON MILITARY','HEALTH/HOSPITAL','HOTEL/ MOTEL',
-    'LIQUOR/PACKAGE STORE','MASS MERCH/SUPERCENTER','MILITARY OFF PREMISE','MILITARY ON-PREMISE',
-    'NON RETAIL ACCOUNT','OTHER OFF PREMISE','OTHER ON PREMISE','RECREATION/ ENTERTAINMENT','RESTAURANT',
-    'SCHOOL','SMALL GROCERY STORE','SPECIALTY RETAIL','SUPERMARKET','TASTING ROOM','TRANSPORTATION',
-    'UNASSIGNED','WHOLESALE CLUB',
-])
+
+CANONICAL_CHANNELS = sorted(
+    [
+        "BAR",
+        "CBD/THC RECREATIONAL",
+        "CONCESSIONAIRE",
+        "CONVENIENCE/ GAS",
+        "DRUG STORE",
+        "E-COMMERCE",
+        "FACTORY/OFFICE",
+        "GENERAL MERCHANDISE",
+        "GOVERNMENT/NON MILITARY",
+        "HEALTH/HOSPITAL",
+        "HOTEL/ MOTEL",
+        "LIQUOR/PACKAGE STORE",
+        "MASS MERCH/SUPERCENTER",
+        "MILITARY OFF PREMISE",
+        "MILITARY ON-PREMISE",
+        "NON RETAIL ACCOUNT",
+        "OTHER OFF PREMISE",
+        "OTHER ON PREMISE",
+        "RECREATION/ ENTERTAINMENT",
+        "RESTAURANT",
+        "SCHOOL",
+        "SMALL GROCERY STORE",
+        "SPECIALTY RETAIL",
+        "SUPERMARKET",
+        "TASTING ROOM",
+        "TRANSPORTATION",
+        "UNASSIGNED",
+        "WHOLESALE CLUB",
+    ]
+)
 
 MATCH_CONFIG_CATALOG = {
     "minmax_CYTrend_blocking": {
         "name": "minmax_CYTrend_blocking",
-        "outlier_cols": ["CY_pre_period_VOL","LY_pre_period_VOL","YOY_pre_period_TREND"],
-        "cols_to_standardize": ["CY_pre_period_VOL","YOY_pre_period_TREND"],
-        "blocking_factors": ["WHOLESALER_NUMBER","RETAILER_CHANNEL"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": MinMaxScaler,
     },
     "minmax_CYLYTrend_blocking": {
         "name": "minmax_CYLYTrend_blocking",
-        "outlier_cols": ["CY_pre_period_VOL","LY_pre_period_VOL","YOY_pre_period_TREND"],
-        "cols_to_standardize": ["CY_pre_period_VOL","LY_pre_period_VOL","YOY_pre_period_TREND"],
-        "blocking_factors": ["WHOLESALER_NUMBER","RETAILER_CHANNEL"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": MinMaxScaler,
     },
     "minmax_all_blocking": {
         "name": "minmax_all_blocking",
-        "outlier_cols": ["CY_pre_period_VOL","LY_pre_period_VOL","YOY_pre_period_TREND"],
-        "cols_to_standardize": ["CY_pre_period_VOL","LY_pre_period_VOL","YOY_pre_period_TREND","CY_CONTRIBUTION"],
-        "blocking_factors": ["WHOLESALER_NUMBER","RETAILER_CHANNEL"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND", "CY_CONTRIBUTION"],
+        "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": MinMaxScaler,
     },
     "minmax_CYTrendShare_blocking": {
         "name": "minmax_CYTrendShare_blocking",
-        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],        
-        "cols_to_standardize": [
-            "CY_pre_period_VOL", 
-            "CY_SHARE", 
-            "YOY_pre_period_TREND"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "CY_SHARE", "YOY_pre_period_TREND"],
         "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": MinMaxScaler,
     },
     "minmax_CYShare_blocking": {
         "name": "minmax_CYShare_blocking",
-        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],        
-        "cols_to_standardize": [
-            "CY_pre_period_VOL", 
-            "CY_SHARE"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "CY_SHARE"],
         "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": MinMaxScaler,
     },
     "standard_CYTrendShare_blocking": {
         "name": "standard_CYTrendShare_blocking",
-        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],        
-        "cols_to_standardize": [
-            "CY_pre_period_VOL", 
-            "YOY_pre_period_TREND", 
-            "CY_SHARE"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "YOY_pre_period_TREND", "CY_SHARE"],
         "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": StandardScaler,
     },
     "robust_CYTrendShare_blocking": {
         "name": "robust_CYTrendShare_blocking",
-        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"], 
-        "cols_to_standardize": [
-            "CY_pre_period_VOL", 
-            "YOY_pre_period_TREND", 
-            "CY_SHARE"],
+        "outlier_cols": ["CY_pre_period_VOL", "LY_pre_period_VOL", "YOY_pre_period_TREND"],
+        "cols_to_standardize": ["CY_pre_period_VOL", "YOY_pre_period_TREND", "CY_SHARE"],
         "blocking_factors": ["WHOLESALER_NUMBER", "RETAILER_CHANNEL"],
         "scaler_type": RobustScaler,
     },
@@ -115,13 +124,6 @@ def parse_int_list(csv_text: str) -> list[int]:
 
 @st.cache_resource
 def get_spark():
-    """
-    Returns a DatabricksSession connected via Databricks Connect.
-    Works locally or in a GitHub-hosted environment, using environment variables.
-    Expects:
-        DATABRICKS_HOST  -> e.g. https://<workspace>.databricks.com
-        DATABRICKS_TOKEN -> personal access token
-    """
     host = os.environ.get("DATABRICKS_HOST")
     token = os.environ.get("DATABRICKS_TOKEN")
 
@@ -133,24 +135,14 @@ def get_spark():
         return None
 
     try:
-        # Build the Databricks session
-        spark = (
-            DatabricksSession.builder
-            .host(host)
-            .token(token)
-            .getOrCreate()
-        )
-
-        # Test the connection quickly
+        spark = DatabricksSession.builder.host(host).token(token).getOrCreate()
         _ = spark.sql("SELECT 1 AS ok").collect()[0]["ok"]
-
         return spark
-
     except Exception as e:
         st.error(f"Databricks Connect error: {e}")
-        import traceback
         st.code(traceback.format_exc(), language="text")
         return None
+
 
 @st.cache_resource
 def get_raw_tables_cached():
@@ -159,28 +151,214 @@ def get_raw_tables_cached():
         return None, None, None, None
 
     try:
-        # Import the heavy utils module only when Spark is available.
         from utils.data import get_raw_data_tables
+
         return get_raw_data_tables(spark)
     except Exception:
         return None, None, None, None
 
 
+def build_true_group_trends_for_offset(
+    membership_df_k: pd.DataFrame,
+    pre_df_k: pd.DataFrame,
+    post_df_k: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    True group trend:
+      pre_trend  = sum(CY_pre) / sum(LY_pre) - 1
+      post_trend = sum(CY_post) / sum(LY_post) - 1
+    """
+    if membership_df_k is None or membership_df_k.empty:
+        return pd.DataFrame(columns=["Group", "pre_trend", "post_trend", "n"])
+
+    def safe_trend(cy: float, ly: float) -> float:
+        return np.nan if (pd.isna(ly) or ly == 0) else (cy / ly) - 1.0
+
+    pre_join = membership_df_k.merge(
+        pre_df_k[["VPID", "CY_pre_period_VOL", "LY_pre_period_VOL"]],
+        on="VPID",
+        how="left",
+    )
+    post_join = membership_df_k.merge(
+        post_df_k[["VPID", "CY_post_period_VOL", "LY_post_period_VOL"]],
+        on="VPID",
+        how="left",
+    )
+
+    rows: list[dict[str, Any]] = []
+    for grp in ["Test", "Control"]:
+        pre_g = pre_join.loc[pre_join["Group"] == grp]
+        post_g = post_join.loc[post_join["Group"] == grp]
+
+        pre_cy = float(pd.to_numeric(pre_g["CY_pre_period_VOL"], errors="coerce").fillna(0).sum())
+        pre_ly = float(pd.to_numeric(pre_g["LY_pre_period_VOL"], errors="coerce").fillna(0).sum())
+        post_cy = float(pd.to_numeric(post_g["CY_post_period_VOL"], errors="coerce").fillna(0).sum())
+        post_ly = float(pd.to_numeric(post_g["LY_post_period_VOL"], errors="coerce").fillna(0).sum())
+
+        rows.append(
+            {
+                "Group": grp,
+                "pre_trend": safe_trend(pre_cy, pre_ly),
+                "post_trend": safe_trend(post_cy, post_ly),
+                "n": int((membership_df_k["Group"] == grp).sum()),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def pre_post_true_trend_chart(trends_df: pd.DataFrame, *, title: str) -> go.Figure | None:
+    if trends_df is None or trends_df.empty:
+        return None
+
+    need = {"Group", "pre_trend", "post_trend", "n"}
+    if not need.issubset(trends_df.columns):
+        st.warning(f"Cannot plot — missing columns: {sorted(need - set(trends_df.columns))}")
+        return None
+
+    def get(grp: str):
+        r = trends_df.loc[trends_df["Group"] == grp]
+        if r.empty:
+            return np.nan, np.nan, 0
+        return float(r.iloc[0]["pre_trend"]), float(r.iloc[0]["post_trend"]), int(r.iloc[0]["n"])
+
+    t_pre, t_post, n_t = get("Test")
+    c_pre, c_post, n_c = get("Control")
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        shared_yaxes=True,
+        subplot_titles=(f"Test (N={n_t})", f"Control (N={n_c})"),
+    )
+    x_pre = "Incoming \nPre-Activation"
+    x_post = "\nPost-Activation"
+    
+    vals = np.array([t_pre, t_post, c_pre, c_post], dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if len(vals) == 0:
+        pad = 0.02
+    else:
+        rng = float(np.nanmax(vals) - np.nanmin(vals))
+        pad = max(0.015, 0.10 * rng)
+
+    def bar_top(v: float) -> float:
+        """
+        Return the bar "top" edge in screen-y terms:
+        - for positive bars, that's v
+        - for negative bars, the top edge is 0 (since bars extend downward from 0)
+        """
+        if not np.isfinite(v):
+            return np.nan
+        return v if v >= 0 else 0.0
+
+    def add_step_arrow(col: int, pre: float, post: float):
+        if not (np.isfinite(pre) and np.isfinite(post)):
+            return
+
+        pre_top = bar_top(pre)
+        post_top = bar_top(post)
+
+        # bracket goes above the highest bar top (works when one/both are negative)
+        y_top = max(pre_top, post_top) + pad
+
+        # 1) vertical up from PRE bar top to y_top
+        fig.add_shape(
+            type="line",
+            xref=f"x{col}",
+            yref="y",
+            x0=x_pre,
+            y0=pre_top,
+            x1=x_pre,
+            y1=y_top,
+            line=dict(color="#111111", width=2),
+        )
+
+        # 2) horizontal across to above POST
+        fig.add_shape(
+            type="line",
+            xref=f"x{col}",
+            yref="y",
+            x0=x_pre,
+            y0=y_top,
+            x1=x_post,
+            y1=y_top,
+            line=dict(color="#111111", width=2),
+        )
+
+        # 3) vertical down to POST bar top with arrowhead
+        fig.add_annotation(
+            x=x_post,
+            y=post_top,
+            xref=f"x{col}",
+            yref="y",
+            ax=x_post,
+            ay=y_top,
+            axref=f"x{col}",
+            ayref="y",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1.0,
+            arrowwidth=2,
+            arrowcolor="#111111",
+            text="",
+        )
+
+        # Delta label centered on the bracket (delta remains post - pre)
+        delta_pts = (post - pre) * 100.0
+        xdom = "x domain" if col == 1 else "x2 domain"
+        fig.add_annotation(
+            x=0.5,
+            y=y_top,
+            xref=xdom,
+            yref="y",
+            text=f"{delta_pts:+.1f}",
+            showarrow=False,
+            font=dict(size=14, color="#111111"),
+            bgcolor="white",
+            bordercolor="#111111",
+            borderwidth=2,
+            borderpad=6,
+            yshift=14,
+        )
+
+    def add_panel(col: int, pre: float, post: float):
+        fig.add_trace(
+            go.Bar(
+                x=[x_pre, x_post],
+                y=[pre, post],
+                marker_color=["#BDBDBD", "#F2C94C"],
+                text=[f"{v*100:.1f}%" if np.isfinite(v) else "" for v in [pre, post]],
+                textposition="outside",
+                cliponaxis=False,
+            ),
+            row=1,
+            col=col,
+        )
+        add_step_arrow(col, pre, post)
+
+    add_panel(1, t_pre, t_post)
+    add_panel(2, c_pre, c_post)
+
+    fig.update_layout(
+        title=title,
+        template="plotly_white",
+        height=450,
+        margin=dict(l=10, r=10, t=70, b=10),
+        showlegend=False,
+    )
+    fig.update_yaxes(
+        title_text="YoY Trend (true group)",
+        tickformat=".0%",
+        zeroline=True,
+        zerolinecolor="#E0E0E0",
+    )
+    return fig
+
 st.set_page_config(page_title="NAZ Measure Matching", layout="wide")
 st.title("NAZ Measure Matching")
 
-
-
-# -------------------------
-# Main panel outputs + orchestration
-# -------------------------
-
-# -------------------------
-# Main Page Inputs
-# -------------------------
-
 st.header("📅 Dates")
-
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -194,9 +372,7 @@ with col2:
 with col3:
     data_end_cap = st.date_input("Data End Cap", value=date(2025, 11, 30))
 
-
 st.header("🏷️ Filters")
-
 col4, col5 = st.columns(2)
 
 with col4:
@@ -207,78 +383,59 @@ with col4:
     )
 
 with col5:
-    desired_premise = st.selectbox(
-        "Premise",
-        options=["ON PREMISE", "OFF PREMISE"],
-        index=0
-    )
+    desired_premise = st.selectbox("Premise", options=["ON PREMISE", "OFF PREMISE"], index=0)
 
-
-# -------------------------
-# Retailer Channels
-# -------------------------
 st.subheader("Retailer Channels")
 
 CHANNEL_KEY_PREFIX = "channel_"
 SELECT_ALL_KEY = "select_all_channels"
 
+
 def channel_key(ch: str) -> str:
     return f"{CHANNEL_KEY_PREFIX}{ch}"
+
 
 def get_selected_channels() -> list[str]:
     return [ch for ch in CANONICAL_CHANNELS if st.session_state.get(channel_key(ch), False)]
 
+
 def compute_all_selected() -> bool:
     return all(st.session_state.get(channel_key(ch), False) for ch in CANONICAL_CHANNELS)
+
 
 def set_all_channels(value: bool) -> None:
     for ch in CANONICAL_CHANNELS:
         st.session_state[channel_key(ch)] = value
 
+
 def on_select_all_change() -> None:
     set_all_channels(st.session_state[SELECT_ALL_KEY])
+
 
 def on_any_channel_change() -> None:
     st.session_state[SELECT_ALL_KEY] = compute_all_selected()
 
-# Initialize defaults once
+
 if SELECT_ALL_KEY not in st.session_state:
     st.session_state[SELECT_ALL_KEY] = False
 
 for ch in CANONICAL_CHANNELS:
     st.session_state.setdefault(channel_key(ch), False)
 
-# Master checkbox (controls all)
-st.checkbox(
-    "Select All Channels",
-    key=SELECT_ALL_KEY,
-    on_change=on_select_all_change,
-)
+st.checkbox("Select All Channels", key=SELECT_ALL_KEY, on_change=on_select_all_change)
 
-# Dropdown container
 with st.expander("Choose Retailer Channels", expanded=False):
     for ch in CANONICAL_CHANNELS:
-        st.checkbox(
-            ch,
-            key=channel_key(ch),
-            on_change=on_any_channel_change,
-        )
+        st.checkbox(ch, key=channel_key(ch), on_change=on_any_channel_change)
 
 desired_retailer_channel = get_selected_channels()
 
-# -------------------------
-# VPIDs + Variable Timing
-# -------------------------
-
 st.header("⚙️ VPIDs + Variable Timing")
 
-uploaded_file = st.file_uploader(
-    "Upload CSV (Column 1 = VPID, Column 2 = Offset Weeks)",
-    type=["csv"]
-)
+uploaded_file = st.file_uploader("Upload CSV (Column 1 = VPID, Column 2 = Offset Weeks)", type=["csv"])
 
-vpids = []
-offsets = []
+vpids: list[int] = []
+offsets: list[int] = []
 
 if uploaded_file is not None:
     try:
@@ -303,25 +460,16 @@ if uploaded_file is not None:
 
         st.success(f"Loaded {len(vpids)} VPIDs from CSV.")
         st.dataframe(df_upload, width="stretch")
-
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
         st.stop()
-
 else:
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
-        vpid_names_text = st.text_input(
-            "VPIDs (comma-separated)",
-            placeholder="77985, 4201748, 4249563"
-        )
-
-    with col2:
-        vpid_offsets_text = st.text_input(
-            "Offsets (weeks, comma-separated)",
-            placeholder="0, 0, 1"
-        )
+    with c1:
+        vpid_names_text = st.text_input("VPIDs (comma-separated)", placeholder="77985, 4201748, 4249563")
+    with c2:
+        vpid_offsets_text = st.text_input("Offsets (weeks, comma-separated)", placeholder="0, 0, 1")
 
     try:
         if vpid_names_text:
@@ -332,58 +480,31 @@ else:
         st.error(f"Parsing error: {e}")
         st.stop()
 
-# Validation
+if vpids and offsets and len(vpids) != len(offsets):
+    st.error("VPIDs count must match offsets count.")
+    st.stop()
+
 if vpids and offsets:
-    if len(vpids) != len(offsets):
-        st.error("VPIDs count must match offsets count.")
-        st.stop()
-
-    vpid_timing_df = pd.DataFrame({
-        "VPID": vpids,
-        "identifier": offsets
-    })
-
-    st.caption(f"Total VPIDs Loaded: {len(vpids)}")
-
-else:
-    vpid_timing_df = pd.DataFrame(columns=["VPID", "identifier"])
-# Final validation
-if vpids and offsets:
-    if len(vpids) != len(offsets):
-        st.error(
-            f"VPIDs count ({len(vpids)}) must match offsets count ({len(offsets)})."
-        )
-        st.stop()
-
-    vpid_timing_df = pd.DataFrame({
-        "VPID": vpids,
-        "identifier": offsets
-    })
-
+    vpid_timing_df = pd.DataFrame({"VPID": vpids, "identifier": offsets})
     st.caption(f"Total VPIDs Loaded: {len(vpids)}")
 else:
     vpid_timing_df = pd.DataFrame(columns=["VPID", "identifier"])
 
-max_controls_per_test = st.number_input(
-    "Max Controls Per Test",
-    min_value=1,
-    value=1,
-    step=1
-)
+max_controls_per_test = st.number_input("Max Controls Per Test", min_value=1, value=1, step=1)
+
 st.header("Matching Config Selection")
-
 selected_cfg_names = st.multiselect(
     "Match Config(s)",
     options=sorted(MATCH_CONFIG_CATALOG.keys()),
     default=["minmax_CYTrend_blocking"],
 )
+
 run = st.button("🚀 Run Matching", type="primary")
-TOTAL_STEPS = 5
 
 
 def init_state():
     st.session_state.setdefault("RESULTS", {})
-    st.session_state.setdefault("LAST_RUN_CONFIG", {})  # optional: keep last inputs shown
+    st.session_state.setdefault("LAST_RUN_CONFIG", {})
 
 
 def safe_show(obj, *, title: str | None = None):
@@ -396,46 +517,27 @@ def safe_show(obj, *, title: str | None = None):
 
 
 def parse_and_validate_inputs() -> tuple[MatchPayload | None, str | None]:
-
-    # -------------------------
-    # Dates
-    # -------------------------
     if start_date is None or end_date is None:
         return None, "Start/End date required."
-
     if measure_start is None or measure_end is None:
         return None, "Measure start/end date required."
-
     if start_date > end_date:
         return None, "Start Date must be <= End Date."
-
     if measure_start > measure_end:
         return None, "Measure Start must be <= Measure End."
 
-    # -------------------------
-    # Filters
-    # -------------------------
     if not brand_cluster_code or not brand_cluster_code.strip():
         return None, "Brand Cluster Code is required."
-
     if not desired_retailer_channel:
         return None, "Select at least one retailer channel."
-
     if not selected_cfg_names:
         return None, "Select at least one match config."
 
-    # -------------------------
-    # VPIDs (already built earlier)
-    # -------------------------
     if vpid_timing_df.empty:
         return None, "Provide at least one VPID."
-
     if len(vpid_timing_df["VPID"]) != len(vpid_timing_df["identifier"]):
         return None, "VPIDs count must match offsets count."
 
-    # -------------------------
-    # Derived objects
-    # -------------------------
     match_configs = [MATCH_CONFIG_CATALOG[n] for n in selected_cfg_names]
 
     payload: MatchPayload = {
@@ -453,8 +555,8 @@ def parse_and_validate_inputs() -> tuple[MatchPayload | None, str | None]:
         "vpid_timing_df": vpid_timing_df,
         "vpids_count": int(len(vpid_timing_df)),
     }
-
     return payload, None
+
 
 def render_run_config(payload: MatchPayload) -> None:
     st.code(
@@ -476,25 +578,17 @@ def render_run_config(payload: MatchPayload) -> None:
 
 
 def run_matching_job(payload: MatchPayload) -> dict[str, Any]:
-    """
-    Returns a results dict ready for st.session_state.RESULTS.
-    """
-    # Step 1: Spark
     spark = get_spark()
     if spark is None:
         raise RuntimeError("Spark / Databricks not available — cannot run matching.")
 
-    # Step 2: raw tables
     hv, hp, hr, hc = get_raw_tables_cached()
     if hv is None:
         raise RuntimeError("Failed to load raw data tables (hv/hp/hr/hc).")
 
-    # Step 3: matching algo (lazy import)
     from utils.matching_algo import run_matching_variable_timing
 
     t0 = perf_counter()
-
-    # (Optional) probe to fail fast if Spark is unhappy
     _ = spark.sql("select 1 as ok").collect()[0]["ok"]
 
     config_summary, matched_dfs, group_dfs = run_matching_variable_timing(
@@ -516,6 +610,24 @@ def run_matching_job(payload: MatchPayload) -> dict[str, Any]:
         data_end_cap=payload["data_end_cap"],
     )
 
+    offsets_local = sorted(payload["vpid_timing_df"]["identifier"].astype(int).unique().tolist())
+    vol_pre_by_k, vol_post_by_k = build_variable_timing_caches(
+        hv,
+        hp,
+        hr,
+        hc,
+        offsets=offsets_local,
+        base_start=payload["start_date"],
+        base_end=payload["end_date"],
+        base_measure_start=payload["measure_start"],
+        base_measure_end=payload["measure_end"],
+        brand_cluster_code=payload["brand_cluster_code"],
+        desired_premise=payload["desired_premise"],
+        desired_retailer_channel=payload["desired_retailer_channel"],
+        vpids_for_post_period=None,
+        data_end_cap=payload["data_end_cap"],
+    )
+
     elapsed = perf_counter() - t0
 
     return {
@@ -525,6 +637,8 @@ def run_matching_job(payload: MatchPayload) -> dict[str, Any]:
         "elapsed_seconds": elapsed,
         "ran_at": datetime.now(),
         "spark_version": getattr(spark, "version", None),
+        "vol_pre_by_offset": vol_pre_by_k,
+        "vol_post_by_offset": vol_post_by_k,
     }
 
 
@@ -532,6 +646,8 @@ def render_results(results: dict):
     config_summary = results.get("config_summary")
     matched_dfs = results.get("matched_dfs", {}) or {}
     group_dfs = results.get("group_dfs", {}) or {}
+    vol_pre_by_offset = results.get("vol_pre_by_offset", {}) or {}
+    vol_post_by_offset = results.get("vol_post_by_offset", {}) or {}
 
     st.subheader("Results")
     st.caption(
@@ -567,12 +683,26 @@ def render_results(results: dict):
         with tabs[i]:
             st.markdown(f"#### Matches — `{cfg_name}`")
 
-            offsets = sorted({k for (c, k) in keys if c == cfg_name})
-            for k in offsets:
+            offsets_local = sorted({k for (c, k) in keys if c == cfg_name})
+            for k in offsets_local:
                 st.markdown(f"##### Offset weeks = {k}")
 
                 df_pairs = matched_dfs.get((cfg_name, k))
                 df_groups = group_dfs.get((cfg_name, k))
+
+                # --- NEW: true group trend chart (pre vs post) ---
+                pre_df_k = vol_pre_by_offset.get(k)
+                post_df_k = vol_post_by_offset.get(k)
+                if (
+                    df_groups is not None
+                    and not getattr(df_groups, "empty", False)
+                    and pre_df_k is not None
+                    and post_df_k is not None
+                ):
+                    trends_df = build_true_group_trends_for_offset(df_groups, pre_df_k, post_df_k)
+                    fig = pre_post_true_trend_chart(trends_df, title=f"YoY Trend Shift — {cfg_name} (offset={k})")
+                    if fig is not None:
+                        st.plotly_chart(fig, use_container_width=True)
 
                 c1, c2 = st.columns(2)
 
@@ -594,14 +724,12 @@ def render_results(results: dict):
 # ---------- UI flow ----------
 init_state()
 
-# Always show last results (if present) without rerun
 results = st.session_state.get("RESULTS", {})
 if results.get("config_summary") is not None:
     st.divider()
     st.subheader("Last results (session)")
     render_results(results)
 
-# Run
 if run:
     st.divider()
     st.subheader("Run output")
@@ -615,7 +743,7 @@ if run:
         st.error("❌ Failed to parse inputs.")
         st.stop()
 
-    st.session_state["LAST_RUN_CONFIG"] = payload  # optional
+    st.session_state["LAST_RUN_CONFIG"] = payload
     render_run_config(payload)
 
     try:
@@ -637,4 +765,3 @@ if run:
     except Exception:
         st.error("❌ Exception raised during run.")
         st.code(traceback.format_exc(), language="text")
-
