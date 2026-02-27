@@ -259,10 +259,8 @@ def pre_post_true_trend_chart(trends_df: pd.DataFrame, *, title: str) -> go.Figu
         pre_top = bar_top(pre)
         post_top = bar_top(post)
 
-        # bracket goes above the highest bar top (works when one/both are negative)
         y_top = max(pre_top, post_top) + pad
 
-        # 1) vertical up from PRE bar top to y_top
         fig.add_shape(
             type="line",
             xref=f"x{col}",
@@ -274,7 +272,6 @@ def pre_post_true_trend_chart(trends_df: pd.DataFrame, *, title: str) -> go.Figu
             line=dict(color="#111111", width=2),
         )
 
-        # 2) horizontal across to above POST
         fig.add_shape(
             type="line",
             xref=f"x{col}",
@@ -286,7 +283,6 @@ def pre_post_true_trend_chart(trends_df: pd.DataFrame, *, title: str) -> go.Figu
             line=dict(color="#111111", width=2),
         )
 
-        # 3) vertical down to POST bar top with arrowhead
         fig.add_annotation(
             x=x_post,
             y=post_top,
@@ -304,7 +300,6 @@ def pre_post_true_trend_chart(trends_df: pd.DataFrame, *, title: str) -> go.Figu
             text="",
         )
 
-        # Delta label centered on the bracket (delta remains post - pre)
         delta_pts = (post - pre) * 100.0
         xdom = "x domain" if col == 1 else "x2 domain"
         fig.add_annotation(
