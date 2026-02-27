@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from databricks.connect import DatabricksSession
 from plotly.subplots import make_subplots
-from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler  # noqa: F401
+from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
 from utils.data import build_variable_timing_caches
 
@@ -685,7 +685,6 @@ def render_results(results: dict):
                 df_pairs = matched_dfs.get((cfg_name, k))
                 df_groups = group_dfs.get((cfg_name, k))
 
-                # --- NEW: true group trend chart (pre vs post) ---
                 pre_df_k = vol_pre_by_offset.get(k)
                 post_df_k = vol_post_by_offset.get(k)
                 if (
