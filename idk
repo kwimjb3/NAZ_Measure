@@ -32,9 +32,12 @@ class MatchPayload(TypedDict):
 
 from sklearn.metrics import pairwise_distances
 
-# import helpers from matching_algo; stable marriage algorithm itself plus
-# the wrapper used by the batch job so we can mimic its preprocessing exactly
-from utils.matching_algo import _stable_marriage_from_distance, run_matching_stable
+# bring in the stable marriage routine so the UI can use it on a local
+# subset of controls (especially useful when only one VPID is being
+# inspected).  We import using the underscored name because the algorithm
+# is internal to the matching module; treating it as public here is fine
+# for analysis/debug purposes.
+from utils.matching_algo import _stable_marriage_from_distance
 
 # --- Helper to get potential controls for a VPID ---
 def get_potential_controls(vpid: int, pre_df: pd.DataFrame, test_df: pd.DataFrame) -> pd.DataFrame:
@@ -62,92 +65,50 @@ def get_potential_controls(vpid: int, pre_df: pd.DataFrame, test_df: pd.DataFram
 # numeric metric that the matcher relies on.  In particular the matcher
 # fits its scaler on the *entire control universe* rather than on the
 # single test row, which was the original source of divergence.
-from utils.matching_algo import (
-    _stable_marriage_from_distance,
-    run_matching_stable,
-    _build_distance_matrix_blocked,
-    _data_cleaning,
-    remove_outliers_iqr,
-    prepare_offset_tables,
-)
+def rank_matches(vpid: int, test_df: pd.DataFrame, control_df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    # filter the control universe down to those that match blocking
+    # factors for the requested test VPID (the same logic that run_matching
+    # applies when building the distance matrix).
+    potential_controls = get_potential_controls(vpid, control_df, test_df)
+    if potential_controls.empty:
+        return pd.DataFrame()
 
-def rank_matches(
-    vpid,
-    pre_df_k: pd.DataFrame,        # offset-correct pre-period data
-    all_test_vpids: set,
-    cfg: dict,
-) -> pd.DataFrame:
     cols = cfg["cols_to_standardize"]
-    outlier_cols = cfg.get("outlier_cols", [])
-    blocking_factors = cfg.get("blocking_factors", [])
-    scaler_cls = cfg.get("scaler_type", MinMaxScaler)
 
-    control_df = pre_df_k[~pre_df_k["VPID"].isin(all_test_vpids)].copy()
-    test_df = pre_df_k[pre_df_k["VPID"] == vpid].copy()
-
-    if control_df.empty or test_df.empty:
-        return pd.DataFrame()
-
-    # mirror matcher preprocessing exactly
-    control_df = _data_cleaning(remove_outliers_iqr(control_df, outlier_cols), cols)
-    test_df = _data_cleaning(remove_outliers_iqr(test_df, outlier_cols), cols)
-
-    if control_df.empty or test_df.empty:
-        return pd.DataFrame()
-
-    scaler = scaler_cls()
+    # scale using the full control universe so that distances computed here
+    # are comparable to those generated during the matching run (see
+    # `run_matching_stable` in utils/matching_algo.py).
+    scaler = cfg.get("scaler_type", MinMaxScaler)()
+    # fit on all available controls, not just the one test row
     scaler.fit(control_df[cols])
-    control_scaled = control_df.copy()
-    test_scaled = test_df.copy()
-    control_scaled[cols] = scaler.transform(control_df[cols])
-    test_scaled[cols] = scaler.transform(test_df[cols])
 
-    dist, test_ids, control_ids = _build_distance_matrix_blocked(
-        test_df=test_scaled,
-        control_df=control_scaled,
-        cols_to_standardize=cols,
-        blocking_factors=blocking_factors,
-    )
+    X_test = scaler.transform(test_df.loc[test_df["VPID"] == vpid, cols])
+    X_control = scaler.transform(potential_controls[cols])
 
-    if dist.size == 0 or vpid not in test_ids:
-        return pd.DataFrame()
+    distances = pairwise_distances(X_test, X_control, metric="euclidean")[0]
 
-    t_idx = test_ids.index(vpid)
-    ranked = control_scaled.copy()
-    ranked["Distance"] = dist[t_idx]
+    ranked = potential_controls.copy()
+    ranked["Distance"] = distances
     ranked = ranked.sort_values("Distance").reset_index(drop=True)
-    ranked["Rank"] = range(1, len(ranked) + 1)
+    ranked["Rank"] = np.arange(1, len(ranked) + 1)
     return ranked
 
 
 # helper that returns the chosen control according to a local stable-marriage
-# run for a single test VPID.  Rather than recomputing distances itself, this
-# helper simply delegates to ``run_matching_stable`` with the same
-# configuration used by the batch job.  That function performs the outlier
-# trimming, control-universe filtering and scaling exactly as the job does,
-# so the returned control will match the job's choice whenever the job is run
-# on the same inputs (even for a single VPID).
+# run for a single test VPID.  This mirrors the algorithm used by the
+# batch matcher and guarantees that even when you inspect a lone VPID the
+# match will respect the same scaling and preference logic.
 def stable_match_vpid(vpid: int, test_df: pd.DataFrame, control_df: pd.DataFrame, cfg: dict) -> Optional[str]:
-    # build minimal dataframes for the call
-    test_subset = test_df.loc[test_df["VPID"] == vpid].copy()
-    if test_subset.empty:
+    ranked = rank_matches(vpid, test_df, control_df, cfg)
+    if ranked.empty:
         return None
 
-    # copy to ensure the original isn’t mutated by the service call
-    ctrl_pool = control_df.copy()
-
-    # call the same matching routine the job uses
-    result = run_matching_stable(
-        control_df=ctrl_pool,
-        test_df=test_subset,
-        outlier_cols=cfg.get("outlier_cols", []),
-        cols_to_standardize=cfg.get("cols_to_standardize", []),
-        blocking_factors=cfg.get("blocking_factors", []),
-        scaler_cls=cfg.get("scaler_type", MinMaxScaler),
-    )
-    if result.empty:
-        return None
-    return result.iloc[0]["Control_VPID"]
+    ctrl_ids = ranked["VPID"].tolist()
+    dist_mat = ranked["Distance"].to_numpy().reshape(1, -1)
+    matches = _stable_marriage_from_distance([vpid], ctrl_ids, dist_mat)
+    if matches:
+        return matches[0][1]
+    return None
 
 CANONICAL_CHANNELS = sorted(
     [
@@ -762,21 +723,6 @@ def render_results(results: dict):
     vol_pre_by_offset = results.get("vol_pre_by_offset", {}) or {}
     vol_post_by_offset = results.get("vol_post_by_offset", {}) or {}
 
-    # The matcher tracks which test VPIDs were "fixed" at each offset; we
-    # can reconstruct that information from the payload the user submitted.
-    tests_fixed_vpids_by_offset: dict[int, set] = {}
-    last_payload = st.session_state.get("LAST_RUN_CONFIG", {})
-    if last_payload:
-        vpid_timing_df = last_payload.get("vpid_timing_df")
-        if vpid_timing_df is not None and not vpid_timing_df.empty:
-            # offsets are stored in the `identifier` column in the UI
-            for k in sorted(vpid_timing_df["identifier"].astype(int).unique().tolist()):
-                vpids_k = vpid_timing_df.loc[
-                    vpid_timing_df["identifier"].astype(int) == k,
-                    "VPID",
-                ].astype(int).tolist()
-                tests_fixed_vpids_by_offset[k] = set(vpids_k)
-
     st.subheader("Results")
     st.caption(
         " | ".join(
@@ -923,7 +869,7 @@ def render_results(results: dict):
                 st.subheader(f"Config: `{cfg_name}`")
 
                 # Use pre-period data for ranking
-                pre_df = results.get("vol_pre_by_offset", {}).get(chosen_offset)
+                pre_df = results.get("vol_pre_by_offset", {}).get(0)
                 if pre_df is None:
                     st.warning("Pre-period data not available for ranking.")
                     continue
@@ -937,15 +883,7 @@ def render_results(results: dict):
                     continue
 
                 cfg = MATCH_CONFIG_CATALOG[cfg_name]
-                ranked_df = rank_matches(
-                    selected_vpid,
-                    pre_df,
-                    all_test_vpids,
-                    cfg,
-                    chosen_offset,
-                    vol_pre_by_offset,
-                    tests_fixed_vpids_by_offset,
-                )
+                ranked_df = rank_matches(selected_vpid, pre_df, control_universe, cfg)
 
                 if ranked_df.empty:
                     st.info(f"No potential matches found for VPID {selected_vpid} under config `{cfg_name}`.")
@@ -985,15 +923,6 @@ def render_results(results: dict):
                             ranked["ChosenByJob"] = ranked["VPID"] == actual_job_match
                         if stable_match is not None:
                             ranked["ChosenByStableMarriage"] = ranked["VPID"] == stable_match
-
-                    # ensure the table is still sorted by distance/rank before showing it
-                    if "Rank" in ranked.columns:
-                        ranked = ranked.sort_values("Rank").reset_index(drop=True)
-
-                    # surface the top candidate separately so it’s always obvious
-                    if not ranked.empty:
-                        top_vpid = ranked.iloc[0]["VPID"]
-                        st.caption(f"Top-ranked control (min distance) → {top_vpid}")
 
                     # warn if job match diverges from the raw-distance minimum
                     if actual_job_match is not None and not ranked.empty:

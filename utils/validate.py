@@ -16,8 +16,8 @@ from typing import Optional, Sequence
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 from tqdm.auto import tqdm
 from time import perf_counter
-from naz_measure.utils.data import *
-from naz_measure.utils.matching_algo import (
+from utils.data import *
+from utils.matching_algo import (
     build_variable_timing_caches,
     precompute_dist_global_across_offsets,
     aggregate_config_metrics_variable_timing,

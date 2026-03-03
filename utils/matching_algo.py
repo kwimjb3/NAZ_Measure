@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler, StandardScaler, MinMaxScaler
 from typing import Optional, Dict, Iterable, Optional, Sequence, Tuple, List
-# from naz_measure.utils.data import get_raw_data_tables, get_post_period_data_df
+from utils.data import *
 try:
     from pyspark.sql import SparkSession, DataFrame
     from pyspark.sql import functions as F
@@ -760,3 +760,76 @@ def compute_global_distance_matrix(
             )
 
     return dist_global, test_ids, control_ids, test_offset_by_vpid
+def get_candidate_controls_for_vpid(
+    vpid: str,
+    vol_pre_period_by_offset: Dict[int, pd.DataFrame],
+    tests_fixed_vpids_by_offset: Dict[int, set],
+    outlier_cols: list[str],
+    cols_to_standardize: list[str],
+    blocking_factors: list[str],
+    scaler_cls=MinMaxScaler,
+    candidate_control_vpids: Optional[Sequence[str]] = None,
+):
+    # Identify offset for this VPID
+    vpid_offset = None
+    for k, vpids in tests_fixed_vpids_by_offset.items():
+        if vpid in vpids:
+            vpid_offset = k
+            break
+    if vpid_offset is None:
+        raise ValueError(f"VPID {vpid} not found in tests_fixed_vpids_by_offset")
+
+    # Prepare tables for this offset only
+    prepared_tables = prepare_offset_tables(
+        vol_pre_period_by_offset={vpid_offset: vol_pre_period_by_offset[vpid_offset]},
+        tests_fixed_vpids_by_offset={vpid_offset: {vpid}},
+        control_ids=candidate_control_vpids or vol_pre_period_by_offset[vpid_offset]["VPID"].tolist(),
+        outlier_cols=outlier_cols,
+        cols_to_standardize=cols_to_standardize,
+        scaler_cls=scaler_cls,
+    )
+
+    if vpid_offset not in prepared_tables:
+        print("No prepared table for this offset")
+        return pd.DataFrame()
+
+    test_df, control_df = prepared_tables[vpid_offset]
+
+    # Compute distances
+    dist, test_ids, control_ids = _build_distance_matrix_blocked(
+        test_df=test_df,
+        control_df=control_df,
+        cols_to_standardize=cols_to_standardize,
+        blocking_factors=blocking_factors
+    )
+
+    if dist.size == 0:
+        return pd.DataFrame()
+
+    # Rank preferences using stable marriage algorithm
+    matches = _stable_marriage_from_distance(test_ids, control_ids, dist)
+
+    # Create detailed candidate table
+    test_idx = test_df.set_index("VPID")
+    control_idx = control_df.set_index("VPID")
+
+    rows = []
+    for t_vpid, c_vpid, d in matches:
+        t_row = test_idx.loc[t_vpid]
+        c_row = control_idx.loc[c_vpid]
+
+        entry = {
+            "Test_VPID": t_vpid,
+            "Control_VPID": c_vpid,
+            "Distance": d,
+        }
+        for bf in blocking_factors:
+            entry[bf] = t_row.get(bf, np.nan)
+        for col in cols_to_standardize:
+            entry[f"Test_{col}"] = t_row[col]
+            entry[f"Control_{col}"] = c_row[col]
+
+        rows.append(entry)
+
+    candidate_df = pd.DataFrame(rows).sort_values("Distance")
+    return candidate_df
