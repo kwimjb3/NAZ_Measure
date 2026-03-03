@@ -71,9 +71,10 @@ from utils.matching_algo import (
     prepare_offset_tables,
 )
 
+
 def rank_matches(
     vpid,
-    pre_df_k: pd.DataFrame,        # offset-correct pre-period data
+    pre_df_k: pd.DataFrame,
     all_test_vpids: set,
     cfg: dict,
 ) -> pd.DataFrame:
@@ -88,7 +89,6 @@ def rank_matches(
     if control_df.empty or test_df.empty:
         return pd.DataFrame()
 
-    # mirror matcher preprocessing exactly
     control_df = _data_cleaning(remove_outliers_iqr(control_df, outlier_cols), cols)
     test_df = _data_cleaning(remove_outliers_iqr(test_df, outlier_cols), cols)
 
@@ -113,8 +113,25 @@ def rank_matches(
         return pd.DataFrame()
 
     t_idx = test_ids.index(vpid)
+
+    # distances returned by `_build_distance_matrix_blocked` correspond to the
+    # *unique* control IDs tracked in ``control_ids``.  control_scaled may
+    # still contain duplicate rows for the same VPID (the pre-period tables
+    # aren’t guaranteed to be deduped), which would make a direct assignment
+    # like ``ranked["Distance"] = dist[t_idx]`` fail with a length mismatch.
+    #
+    # Create a mapping from VPID→distance and then merge it back, which keeps
+    # duplicates while still allowing the DataFrame length to differ.
+    drow = dist[t_idx]
+    dist_map = pd.Series(drow, index=control_ids)
+
     ranked = control_scaled.copy()
-    ranked["Distance"] = dist[t_idx]
+    ranked["Distance"] = ranked["VPID"].map(dist_map)
+
+    # any unexpected missing distances (e.g. VPID filtered out by blocking)
+    # should be treated as extremely large so they fall to the bottom
+    ranked["Distance"] = ranked["Distance"].fillna(np.inf)
+
     ranked = ranked.sort_values("Distance").reset_index(drop=True)
     ranked["Rank"] = range(1, len(ranked) + 1)
     return ranked
@@ -937,15 +954,7 @@ def render_results(results: dict):
                     continue
 
                 cfg = MATCH_CONFIG_CATALOG[cfg_name]
-                ranked_df = rank_matches(
-                    selected_vpid,
-                    pre_df,
-                    all_test_vpids,
-                    cfg,
-                    chosen_offset,
-                    vol_pre_by_offset,
-                    tests_fixed_vpids_by_offset,
-                )
+                ranked_df = rank_matches(selected_vpid, pre_df, set(all_test_vpids), cfg)
 
                 if ranked_df.empty:
                     st.info(f"No potential matches found for VPID {selected_vpid} under config `{cfg_name}`.")

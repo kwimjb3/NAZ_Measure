@@ -1,48 +1,22 @@
-
 import sys
-from pathlib import Path
-
-repo_root = Path("/workspaces/NAZ_Measure")  # adjust to your Codespace repo
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-# def override_sys_breakpoint(frame=None):
-#     from IPython.core.debugger import set_trace
-#     set_trace(frame=frame)
-# sys.breakpointhook = override_sys_breakpoint
-# %reload_ext autoreload
-# %autoreload 2
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler, StandardScaler, MinMaxScaler
-from typing import Optional, Dict, Iterable, Optional, Sequence, Tuple, List
-from utils.data import *
-try:
-    from pyspark.sql import SparkSession, DataFrame
-    from pyspark.sql import functions as F
-    _PYSPARK_AVAILABLE = True
-except Exception:
-    SparkSession = None
-    DataFrame = None
-    F = None
-    _PYSPARK_AVAILABLE = False
+from typing import Optional, Dict, Sequence, Tuple, List
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import functions as F
 from datetime import date
 from dateutil.relativedelta import relativedelta
-try:
-    from .data import *
-except Exception:
-    # Allow running this file directly (for quick tests) by ensuring the
-    # project root is on sys.path and importing the package-style module.
-    import os
-    import sys as _sys
-    _sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-    from utils.data import *
-from tqdm.auto import tqdm  
+from utils.data import *
+from tqdm.auto import tqdm
 import copy
+
 
 def _data_cleaning(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     df = df.copy()
     df[cols] = df[cols].replace([np.inf, -np.inf], np.nan)
     return df.dropna(subset=cols)
+
 
 def remove_outliers_iqr(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     df_final = df
@@ -56,6 +30,7 @@ def remove_outliers_iqr(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
         upper = q3 + 1.5 * iqr
         df_final = df_final[(new_vals >= lower) & (new_vals <= upper)]
     return df_final
+
 
 def _get_pool_of_potential_control_accounts(
     df: pd.DataFrame,
@@ -75,6 +50,7 @@ def _get_pool_of_potential_control_accounts(
     mask &= ~df["VPID"].isin(used_control_vpids)
     pool = df.loc[mask]
     return pool.copy() if writable else pool
+
 
 def get_best_match(
     df: pd.DataFrame,
@@ -98,6 +74,7 @@ def get_best_match(
 
     return pool.nsmallest(1, "DIST")
 
+
 def process_best_match(
     best_match: pd.DataFrame,
     test_row: pd.Series,
@@ -109,7 +86,7 @@ def process_best_match(
 ) -> tuple[list[dict], set]:
     if best_match.empty:
         return matched_results, used_control_vpids
-    
+
     control_vpid = best_match.iloc[0]["VPID"]
     entry = {"Test_VPID": test_row["VPID"], "Control_VPID": control_vpid}
 
@@ -127,19 +104,16 @@ def process_best_match(
     return matched_results, used_control_vpids
 
 
-
 def safe_trend(cy: float, ly: float) -> float:
-
     if pd.isna(ly) or ly == 0:
         return np.nan
     return (cy / ly) - 1
 
 
-
 def run_matching_variable_timing(
     vpid_timing_df: pd.DataFrame,
     match_configs: List[dict],
-    hv: "DataFrame", hp: "DataFrame", hr: "DataFrame", hc: "DataFrame",
+    hv: DataFrame, hp: DataFrame, hr: DataFrame, hc: DataFrame,
     base_start: date, base_end: date,
     base_measure_start: date, base_measure_end: date,
     brand_cluster_code: str,
@@ -188,13 +162,9 @@ def run_matching_variable_timing(
         tests_fixed_vpids_by_offset[k] = set(tests_fixed["VPID"])
 
     matched_dfs: Dict[Tuple[str, int], pd.DataFrame] = {}
-    for cfg in tqdm(
-        match_configs,
-        desc="Matching configs",
-        unit="config"
-    ):
-        cfg_name = cfg["name"]
 
+    for cfg in tqdm(match_configs, desc="Matching configs", unit="config"):
+        cfg_name = cfg["name"]
 
         used_controls_global: set = set(all_test_vpids)
         all_rounds_by_offset: Dict[int, List[pd.DataFrame]] = {k: [] for k in offsets}
@@ -245,7 +215,6 @@ def run_matching_variable_timing(
                 df_k = matched_by_offset.get(k)
                 if df_k is None or df_k.empty:
                     continue
-
                 any_match = True
                 df_k = df_k.copy()
                 df_k["match_order"] = m
@@ -262,7 +231,6 @@ def run_matching_variable_timing(
                     columns=["Test_VPID", "Control_VPID", "Distance", "match_order"]
                 )
 
-
     configs = [cfg["name"] for cfg in match_configs]
     canonical_tests_by_offset: Dict[int, set] = {}
     for k in offsets:
@@ -277,7 +245,6 @@ def run_matching_variable_timing(
             canonical_tests_by_offset[k] = set()
         else:
             canonical_tests_by_offset[k] = set.intersection(*tests_sets)
-
 
     group_dfs: Dict[Tuple[str, int], pd.DataFrame] = {}
     config_rows: List[dict] = []
@@ -308,8 +275,6 @@ def run_matching_variable_timing(
                 memberships_all.append(membership_df_k)
                 continue
 
-            # Option: one control per test (lowest distance). If you want up to max_controls_per_test,
-            # you can instead keep rows with match_order <= max_controls_per_test.
             df_pairs = df_pairs.sort_values(["Test_VPID", "Distance"])
             df_best = df_pairs.groupby("Test_VPID", as_index=False).first()
 
@@ -325,8 +290,10 @@ def run_matching_variable_timing(
             ctrl_members.insert(0, "Group", "Control")
             ctrl_members["offset_weeks"] = k
 
-            membership_df_k = pd.concat([test_members, ctrl_members], ignore_index=True)\
-                                .drop_duplicates(["Group", "VPID"])
+            membership_df_k = (
+                pd.concat([test_members, ctrl_members], ignore_index=True)
+                .drop_duplicates(["Group", "VPID"])
+            )
 
             group_dfs[(cfg_name, k)] = membership_df_k
             memberships_all.append(membership_df_k)
@@ -359,6 +326,7 @@ def _build_distance_matrix_blocked(
 ) -> tuple[np.ndarray, list, list]:
     if test_df.empty or control_df.empty:
         return np.zeros((0, 0), dtype=float), [], []
+
     test_ids = sorted(pd.unique(test_df["VPID"]))
     control_ids = sorted(pd.unique(control_df["VPID"]))
 
@@ -371,8 +339,9 @@ def _build_distance_matrix_blocked(
     n_test = len(test_ids)
     n_ctrl = len(control_ids)
     dist = np.full((n_test, n_ctrl), np.inf, dtype=np.float32)
+
     if not blocking_factors:
-        diff = X_test[:, None, :] - X_ctrl[None, :, :]  # (T, C, F)
+        diff = X_test[:, None, :] - X_ctrl[None, :, :]
         dist = np.linalg.norm(diff, axis=2).astype(np.float32)
         return dist, test_ids, control_ids
 
@@ -402,14 +371,14 @@ def _build_distance_matrix_blocked(
     for k in common_keys:
         ti = np.asarray(test_idx_by_key[k], dtype=int)
         cj = np.asarray(ctrl_idx_by_key[k], dtype=int)
-        Xt_block = X_test[ti] 
-        Xc_block = X_ctrl[cj]  
-        diff = Xt_block[:, None, :] - Xc_block[None, :, :] 
+        Xt_block = X_test[ti]
+        Xc_block = X_ctrl[cj]
+        diff = Xt_block[:, None, :] - Xc_block[None, :, :]
         block_dist = np.linalg.norm(diff, axis=2).astype(np.float32)
-
         dist[np.ix_(ti, cj)] = block_dist
 
     return dist, test_ids, control_ids
+
 
 def precompute_dist_global_across_offsets(
     vol_pre_period_by_offset: Dict[int, pd.DataFrame],
@@ -423,7 +392,6 @@ def precompute_dist_global_across_offsets(
     control_volume_q_bounds: Tuple[float, float] = (0.05, 0.95),
     candidate_control_vpids: Optional[Sequence[str]] = None,
 ) -> tuple[np.ndarray, list, list, Dict[str, int]]:
-
     control_ids = build_global_control_universe(
         vol_pre_period_by_offset=vol_pre_period_by_offset,
         all_test_vpids=all_test_vpids,
@@ -447,18 +415,14 @@ def precompute_dist_global_across_offsets(
     if not prepared_tables:
         return np.zeros((0, 0), dtype=np.float32), [], [], {}
 
-
     dist_global, test_ids, control_ids, test_offset_by_vpid = compute_global_distance_matrix(
-            prepared_offset_tables=prepared_tables,
-            tests_fixed_vpids_by_offset=tests_fixed_vpids_by_offset,
-            blocking_factors=blocking_factors,
-            cols_to_standardize=cols_to_standardize,
-        )
+        prepared_offset_tables=prepared_tables,
+        tests_fixed_vpids_by_offset=tests_fixed_vpids_by_offset,
+        blocking_factors=blocking_factors,
+        cols_to_standardize=cols_to_standardize,
+    )
 
     return dist_global, test_ids, control_ids, test_offset_by_vpid
-
-
-
 
 
 def _stable_marriage_from_distance(
@@ -466,19 +430,16 @@ def _stable_marriage_from_distance(
     control_ids: list,
     dist: np.ndarray,
 ) -> list[tuple[str, str, float]]:
-
     n_test, n_ctrl = dist.shape
     if n_test == 0 or n_ctrl == 0:
         return []
-
 
     test_prefs: list[list[int]] = []
     for i in range(n_test):
         row = dist[i, :]
         valid = [(j, row[j]) for j in range(n_ctrl) if np.isfinite(row[j])]
-        valid.sort(key=lambda x: x[1]) 
+        valid.sort(key=lambda x: x[1])
         test_prefs.append([j for j, _ in valid])
-
 
     control_prefs: list[list[int]] = []
     for j in range(n_ctrl):
@@ -487,16 +448,14 @@ def _stable_marriage_from_distance(
         valid.sort(key=lambda x: x[1])
         control_prefs.append([i for i, _ in valid])
 
-
     control_rank = np.full((n_ctrl, n_test), fill_value=n_test + 1, dtype=int)
     for j in range(n_ctrl):
         for rank, i in enumerate(control_prefs[j]):
             control_rank[j, i] = rank
 
-
     free_tests = {i for i in range(n_test) if len(test_prefs[i]) > 0}
     next_proposal_index = [0] * n_test
-    current_partner = [None] * n_ctrl  
+    current_partner = [None] * n_ctrl
 
     while free_tests:
         t = free_tests.pop()
@@ -510,17 +469,13 @@ def _stable_marriage_from_distance(
                 current_partner[c] = t
                 break
 
-
             other = current_partner[c]
             if control_rank[c, t] < control_rank[c, other]:
-
                 current_partner[c] = t
-
                 if next_proposal_index[other] < len(test_prefs[other]):
                     free_tests.add(other)
                 break
             else:
-
                 continue
 
     matches: list[tuple[str, str, float]] = []
@@ -539,10 +494,9 @@ def run_matching_stable(
     outlier_cols: list[str],
     cols_to_standardize: list[str],
     blocking_factors: list[str],
-    scaler_cls = MinMaxScaler,
+    scaler_cls=MinMaxScaler,
     candidate_control_vpids: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
-
     if "VPID" not in control_df.columns or "VPID" not in test_df.columns:
         raise ValueError("Both control_df and test_df must contain a 'VPID' column.")
 
@@ -550,7 +504,6 @@ def run_matching_stable(
     test_clean = _data_cleaning(remove_outliers_iqr(test_df, outlier_cols), cols_to_standardize)
 
     test_vpids = set(test_clean["VPID"])
-
     control_pool = control_clean[~control_clean["VPID"].isin(test_vpids)]
 
     if candidate_control_vpids is not None:
@@ -594,10 +547,8 @@ def run_matching_stable(
             "Control_VPID": ctrl_vpid,
             "Distance": d,
         }
-
         for bf in blocking_factors:
             entry[bf] = t_row.get(bf, np.nan)
-
         for col in cols_to_standardize:
             entry[f"Test_{col}"] = t_row[col]
             entry[f"Control_{col}"] = c_row[col]
@@ -606,6 +557,7 @@ def run_matching_stable(
 
     return pd.DataFrame(rows)
 
+
 def build_global_control_universe(
     vol_pre_period_by_offset: Dict[int, pd.DataFrame],
     all_test_vpids: set,
@@ -613,11 +565,7 @@ def build_global_control_universe(
     control_volume_q_bounds: Tuple[float, float] = (0.05, 0.95),
     candidate_control_vpids: Optional[Sequence[str]] = None,
 ) -> list[str]:
-
-    union_pre = pd.concat(
-        vol_pre_period_by_offset.values(),
-        ignore_index=True
-    )
+    union_pre = pd.concat(vol_pre_period_by_offset.values(), ignore_index=True)
 
     all_controls = set(union_pre["VPID"].unique())
     all_controls -= all_test_vpids
@@ -626,25 +574,21 @@ def build_global_control_universe(
         all_controls &= set(candidate_control_vpids)
 
     if control_volume_col in union_pre.columns:
-        agg = (
-            union_pre.groupby("VPID", as_index=False)[control_volume_col]
-            .sum()
-        )
-
+        agg = union_pre.groupby("VPID", as_index=False)[control_volume_col].sum()
         vals = pd.to_numeric(agg[control_volume_col], errors="coerce").dropna()
 
         if len(vals):
             q_low, q_high = vals.quantile(control_volume_q_bounds).tolist()
             band_ids = set(
                 agg.loc[
-                    (agg[control_volume_col] >= q_low)
-                    & (agg[control_volume_col] <= q_high),
+                    (agg[control_volume_col] >= q_low) & (agg[control_volume_col] <= q_high),
                     "VPID"
                 ]
             )
             all_controls &= band_ids
 
     return sorted(all_controls)
+
 
 def prepare_offset_tables(
     vol_pre_period_by_offset: Dict[int, pd.DataFrame],
@@ -654,11 +598,9 @@ def prepare_offset_tables(
     cols_to_standardize: list[str],
     scaler_cls,
 ):
-
     prepared = {}
 
     for k, df in vol_pre_period_by_offset.items():
-
         test_ids_k = tests_fixed_vpids_by_offset.get(k, set())
         if not test_ids_k:
             continue
@@ -673,14 +615,8 @@ def prepare_offset_tables(
         if test_df.empty or control_df.empty:
             continue
 
-        control_df = _data_cleaning(
-            remove_outliers_iqr(control_df, outlier_cols),
-            cols_to_standardize
-        )
-        test_df = _data_cleaning(
-            remove_outliers_iqr(test_df, outlier_cols),
-            cols_to_standardize
-        )
+        control_df = _data_cleaning(remove_outliers_iqr(control_df, outlier_cols), cols_to_standardize)
+        test_df = _data_cleaning(remove_outliers_iqr(test_df, outlier_cols), cols_to_standardize)
 
         if control_df.empty or test_df.empty:
             continue
@@ -690,24 +626,20 @@ def prepare_offset_tables(
 
         control_scaled = control_df.copy()
         test_scaled = test_df.copy()
-
-        control_scaled[cols_to_standardize] = scaler.transform(
-            control_df[cols_to_standardize]
-        )
-        test_scaled[cols_to_standardize] = scaler.transform(
-            test_df[cols_to_standardize]
-        )
+        control_scaled[cols_to_standardize] = scaler.transform(control_df[cols_to_standardize])
+        test_scaled[cols_to_standardize] = scaler.transform(test_df[cols_to_standardize])
 
         prepared[k] = (test_scaled, control_scaled)
 
     return prepared
+
+
 def compute_global_distance_matrix(
     prepared_offset_tables: Dict[int, tuple[pd.DataFrame, pd.DataFrame]],
     tests_fixed_vpids_by_offset: Dict[int, set],
     blocking_factors: list[str],
     cols_to_standardize: list[str],
 ):
-
     test_offset_by_vpid = {
         v: k
         for k, vpids in tests_fixed_vpids_by_offset.items()
@@ -728,38 +660,28 @@ def compute_global_distance_matrix(
     test_index = {v: i for i, v in enumerate(test_ids)}
     ctrl_index = {v: j for j, v in enumerate(control_ids)}
 
-    dist_global = np.full(
-        (len(test_ids), len(control_ids)),
-        np.inf,
-        dtype=np.float32
-    )
+    dist_global = np.full((len(test_ids), len(control_ids)), np.inf, dtype=np.float32)
 
     for k, (test_df, control_df) in prepared_offset_tables.items():
-
         dist_k, test_ids_k, control_ids_k = _build_distance_matrix_blocked(
-            test_df,
-            control_df,
-            cols_to_standardize,
-            blocking_factors
+            test_df, control_df, cols_to_standardize, blocking_factors
         )
 
         if dist_k.size == 0:
             continue
 
-        ctrl_positions = np.array(
-            [ctrl_index[c] for c in control_ids_k],
-            dtype=int
-        )
+        ctrl_positions = np.array([ctrl_index[c] for c in control_ids_k], dtype=int)
 
         for i_local, t_id in enumerate(test_ids_k):
             gi = test_index[t_id]
-
             dist_global[gi, ctrl_positions] = np.minimum(
                 dist_global[gi, ctrl_positions],
                 dist_k[i_local]
             )
 
     return dist_global, test_ids, control_ids, test_offset_by_vpid
+
+
 def get_candidate_controls_for_vpid(
     vpid: str,
     vol_pre_period_by_offset: Dict[int, pd.DataFrame],
@@ -770,7 +692,6 @@ def get_candidate_controls_for_vpid(
     scaler_cls=MinMaxScaler,
     candidate_control_vpids: Optional[Sequence[str]] = None,
 ):
-    # Identify offset for this VPID
     vpid_offset = None
     for k, vpids in tests_fixed_vpids_by_offset.items():
         if vpid in vpids:
@@ -779,7 +700,6 @@ def get_candidate_controls_for_vpid(
     if vpid_offset is None:
         raise ValueError(f"VPID {vpid} not found in tests_fixed_vpids_by_offset")
 
-    # Prepare tables for this offset only
     prepared_tables = prepare_offset_tables(
         vol_pre_period_by_offset={vpid_offset: vol_pre_period_by_offset[vpid_offset]},
         tests_fixed_vpids_by_offset={vpid_offset: {vpid}},
@@ -795,21 +715,18 @@ def get_candidate_controls_for_vpid(
 
     test_df, control_df = prepared_tables[vpid_offset]
 
-    # Compute distances
     dist, test_ids, control_ids = _build_distance_matrix_blocked(
         test_df=test_df,
         control_df=control_df,
         cols_to_standardize=cols_to_standardize,
-        blocking_factors=blocking_factors
+        blocking_factors=blocking_factors,
     )
 
     if dist.size == 0:
         return pd.DataFrame()
 
-    # Rank preferences using stable marriage algorithm
     matches = _stable_marriage_from_distance(test_ids, control_ids, dist)
 
-    # Create detailed candidate table
     test_idx = test_df.set_index("VPID")
     control_idx = control_df.set_index("VPID")
 
@@ -818,11 +735,7 @@ def get_candidate_controls_for_vpid(
         t_row = test_idx.loc[t_vpid]
         c_row = control_idx.loc[c_vpid]
 
-        entry = {
-            "Test_VPID": t_vpid,
-            "Control_VPID": c_vpid,
-            "Distance": d,
-        }
+        entry = {"Test_VPID": t_vpid, "Control_VPID": c_vpid, "Distance": d}
         for bf in blocking_factors:
             entry[bf] = t_row.get(bf, np.nan)
         for col in cols_to_standardize:
@@ -831,5 +744,4 @@ def get_candidate_controls_for_vpid(
 
         rows.append(entry)
 
-    candidate_df = pd.DataFrame(rows).sort_values("Distance")
-    return candidate_df
+    return pd.DataFrame(rows).sort_values("Distance")
