@@ -376,8 +376,8 @@ def pre_post_true_trend_chart(trends_df: pd.DataFrame, *, title: str) -> go.Figu
     return fig
 
 
-st.set_page_config(page_title="NAZ Measure Matching", layout="wide")
-st.title("NAZ Measure Matching")
+st.set_page_config(page_title="MATCH Measurement", layout="wide")
+st.title("MATCH Measurement")
 
 st.header("📅 Dates")
 col1, col2, col3 = st.columns(3)
